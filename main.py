@@ -8,7 +8,7 @@ ADMIN_ID = 5073222820
 bot = telebot.TeleBot(BOT_TOKEN)
 
 ydl_opts = {
-    'format': 'mp4[height<=360]',  # 360p तक का वीडियो डाउनलोड करेगा
+    'format': 'mp4[height<=360]',
     'outtmpl': 'downloads/%(id)s.%(ext)s',
     'noplaylist': True,
     'quiet': True,
@@ -44,10 +44,11 @@ def download_shorts(message):
         os.remove(file_path)
 
     except Exception as e:
-        bot.edit_message_text(f"कुछ गलत हो गया: {str(e)}", message.chat.id, msg.message_id)
-        # Admin को error भेजना (optional)
-        bot.send_message(ADMIN_ID, f"Error for user {message.from_user.id}: {str(e)}")
+        err_msg = str(e)
+        bot.edit_message_text(f"वीडियो डाउनलोड नहीं हो पाया: {err_msg}", message.chat.id, msg.message_id)
+        # Admin को error भेजना
+        bot.send_message(ADMIN_ID, f"Error for user {message.from_user.id} ({message.from_user.username}): {err_msg}")
 
 if __name__ == '__main__':
-    bot.remove_webhook()  # webhook हटाओ ताकि polling में conflict न हो
+    bot.remove_webhook()  # webhook हटाओ जिससे 409 error न आए
     bot.infinity_polling()
