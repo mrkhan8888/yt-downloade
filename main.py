@@ -3,11 +3,12 @@ from yt_dlp import YoutubeDL
 import os
 
 BOT_TOKEN = "8278209952:AAFVWH7Yl534bZ9BpsRhY5rpX2a-TGItcls"
+ADMIN_ID = 5073222820
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 ydl_opts = {
-    'format': 'mp4[height<=360]',  # 360p तक डाउनलोड करेगा
+    'format': 'mp4[height<=360]',  # 360p तक का वीडियो डाउनलोड करेगा
     'outtmpl': 'downloads/%(id)s.%(ext)s',
     'noplaylist': True,
     'quiet': True,
@@ -44,7 +45,9 @@ def download_shorts(message):
 
     except Exception as e:
         bot.edit_message_text(f"कुछ गलत हो गया: {str(e)}", message.chat.id, msg.message_id)
+        # Admin को error भेजना (optional)
+        bot.send_message(ADMIN_ID, f"Error for user {message.from_user.id}: {str(e)}")
 
 if __name__ == '__main__':
-    bot.remove_webhook()  # webhook हटाओ ताकि polling ठीक चले
+    bot.remove_webhook()  # webhook हटाओ ताकि polling में conflict न हो
     bot.infinity_polling()
