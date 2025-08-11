@@ -8,7 +8,7 @@ import logging
 # === CONFIG ===
 BOT_TOKEN = "<8278209952:AAFVWH7Yl534bZ9BpsRhY5rpX2a-TGItcls>"
 ADMIN_ID = 5073222820
-RENDER_DOMAIN = "<YOUR-RENDER-DOMAIN>"  # e.g. mybot.onrender.com
+RENDER_DOMAIN = "<yt-downloade>"  # e.g. mybot.onrender.com
 
 # === LOGGING ===
 logging.basicConfig(level=logging.INFO)
