@@ -4,8 +4,10 @@ import sqlite3
 import tempfile
 import asyncio
 from pathlib import Path
+import logging
 
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 from aiofiles import open as aio_open
 
 from telegram import (
@@ -23,8 +25,15 @@ from telegram.ext import (
 )
 
 # ---- CONFIG ----
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or "PUT_YOUR_TOKEN_HERE"
 ADMIN_ID = int(os.environ.get("ADMIN_ID") or 5073222820)
+
+# optional: path to cookies.txt (set this in Render secret files or env)
+COOKIE_FILE = os.environ.get("COOKIE_FILE")  # e.g. "/etc/secrets/cookies.txt"
+GEO_BYPASS_COUNTRY = os.environ.get("GEO_BYPASS_COUNTRY")  # e.g. "IN"
 
 DB_PATH = "bot_users.db"
 DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "ytbot_downloads"
@@ -93,20 +102,43 @@ def get_share_flags(uid:int):
     return [0,0,0]
 
 # ---- yt-dlp helpers ----
-YDL_OPTS_INFO = {"quiet": True, "skip_download": True}
-YDL_OPTS_DL = {
-    "outtmpl": str(DOWNLOAD_DIR / "%(id)s.%(ext)s"),
-    "format": "bestvideo+bestaudio/best",
-    "merge_output_format": "mp4",
-    "noplaylist": True,
+# build base options and include cookiefile / geo bypass if provided
+YDL_BASE = {
     "quiet": True,
     "no_warnings": True,
+    "ignoreerrors": False,
+    "format": "bestvideo+bestaudio/best",
+    "noplaylist": True,
+}
+
+if COOKIE_FILE:
+    YDL_BASE["cookiefile"] = COOKIE_FILE
+if GEO_BYPASS_COUNTRY:
+    YDL_BASE["geo_bypass"] = True
+    YDL_BASE["geo_bypass_country"] = GEO_BYPASS_COUNTRY
+else:
+    # set geo_bypass True anyway to try bypassing geo if possible
+    YDL_BASE["geo_bypass"] = True
+
+YDL_OPTS_INFO = {**YDL_BASE, "skip_download": True}
+YDL_OPTS_DL = {
+    **YDL_BASE,
+    "outtmpl": str(DOWNLOAD_DIR / "%(id)s.%(ext)s"),
+    "merge_output_format": "mp4",
 }
 
 def get_info(url: str):
-    with YoutubeDL(YDL_OPTS_INFO) as ydl:
-        info = ydl.extract_info(url, download=False)
-    return info
+    try:
+        with YoutubeDL(YDL_OPTS_INFO) as ydl:
+            info = ydl.extract_info(url, download=False)
+        return info
+    except DownloadError as e:
+        # re-raise so caller can detect and show friendly message
+        logger.exception("yt-dlp DownloadError in get_info")
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in get_info")
+        raise
 
 def estimate_size_from_info(info) -> int:
     # try a few common fields
@@ -118,14 +150,20 @@ def estimate_size_from_info(info) -> int:
     # prefer filesize fields
     fs = info.get("filesize") or info.get("filesize_approx")
     if fs:
-        return int(fs)
+        try:
+            return int(fs)
+        except:
+            pass
     # else try formats
     best = 0
     for f in info.get("formats", []) or []:
         for key in ("filesize", "filesize_approx"):
             v = f.get(key)
             if v:
-                best = max(best, int(v))
+                try:
+                    best = max(best, int(v))
+                except:
+                    pass
     return best
 
 async def download_and_return_path(url: str, loop=None) -> Path:
@@ -140,7 +178,6 @@ async def download_and_return_path(url: str, loop=None) -> Path:
             p = Path(fn)
             if p.exists():
                 return p
-            # try mp4 variant
             mp4 = p.with_suffix(".mp4")
             if mp4.exists():
                 return mp4
@@ -154,7 +191,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (
         "नमस्ते! मैं YouTube/Shorts/ Reels डाउनलोड बॉट हूँ.\n\n"
         "— किसी भी YouTube लिंक को यहाँ भेजो, मैं उसका साइज़ देख कर बताऊँगा और डाउनलोड कर दूँगा।\n"
-        f"— Free डाउनलोड: 0 — {FREE_LIMIT//(1024*1024)} MB तक。\n"
+        f"— Free डाउनलोड: 0 — {FREE_LIMIT//(1024*1024)} MB तक।\n"
         "— बड़ा विडियो (>20MB) के लिए शेयर कन्फर्म करना पड़ेगा या admin से activate कराना होगा।\n\n"
         "Usage:\n• बस YouTube लिंक भेजो।\n• Admin केवल `/activate <user_id>` और `/deactivate <user_id>` commands चला सकता है।"
     )
@@ -179,7 +216,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_event_loop()
     try:
         info = await loop.run_in_executor(None, get_info, msg)
+    except DownloadError as e:
+        errtxt = str(e)
+        logger.info("DownloadError while getting info: %s", errtxt)
+        # Friendly messages for common yt-dlp failures
+        if "Sign in to confirm" in errtxt or "Sign in to confirm you" in errtxt or "use --cookies" in errtxt.lower():
+            await update.message.reply_text(
+                "त्रुटि: YouTube ने sign-in/captcha माँगा — कृपया अपने ब्राउज़र से `cookies.txt` export करके Render में upload करें और `COOKIE_FILE` env var सेट करें।\n\n"
+                "Local test: `yt-dlp --cookies cookies.txt <URL>`\n\n"
+                "Instructions summary:\n1) Browser में YouTube login करो\n2) Extension से cookies.txt export करो\n3) Render secret files में upload करो और `COOKIE_FILE` path set करो\n4) फिर bot redeploy करो।"
+            )
+        elif "This content isn't available" in errtxt or "Video unavailable" in errtxt:
+            await update.message.reply_text("त्रुटि: यह वीडियो उपलब्ध नहीं है (हटा दिया गया / priva te / region-restricted)।")
+        elif "403" in errtxt or "forbidden" in errtxt.lower():
+            await update.message.reply_text("त्रुटि: एक्सेस denied (403). यह region- या login-locked हो सकता है।")
+        else:
+            await update.message.reply_text(f"त्रुटि: जानकारी निकालने में दिक्कत: {errtxt}")
+        return
     except Exception as e:
+        logger.exception("Error getting info")
         await update.message.reply_text(f"त्रुटि: जानकारी निकालने में दिक्कत: {e}")
         return
 
@@ -191,6 +246,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"'{title}' → आकार ≈ {size_mb:.2f} MB — free, डाउनलोड कर रहा हूँ...")
         try:
             path = await download_and_return_path(msg)
+        except DownloadError as e:
+            await update.message.reply_text(f"डाउनलोड में एरर (yt-dlp): {e}\nयदि यह sign-in/cookies मांग रहा है तो उपर दिए instructions follow करो।")
+            return
         except Exception as e:
             await update.message.reply_text(f"डाउनलोड में एरर: {e}")
             return
@@ -211,6 +269,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("आप admin द्वारा activate हैं — अब डाउनलोड शुरू करता हूँ...")
         try:
             path = await download_and_return_path(msg)
+        except DownloadError as e:
+            await update.message.reply_text(f"डाउनलोड एरर (yt-dlp): {e}\n(अगर sign-in/cookies मांगता है तो COOKIE_FILE सेट करो)।")
+            return
         except Exception as e:
             await update.message.reply_text(f"डाउनलोड में एरर: {e}")
             return
@@ -239,8 +300,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Verify & Download", callback_data=f"verify_dl::{msg}")
         ]
     ])
+    est_text = f" ~{size_mb:.2f} MB" if size_mb else ""
     text = (
-        f"यह फ़ाइल ~{size_mb:.2f} MB हो सकती है। बड़े वीडियो डाउनलोड करने के लिए कृपया नीचे के चरण पूरे करें:\n\n"
+        f"यह फ़ाइल{est_text} हो सकती है। बड़े वीडियो डाउनलोड करने के लिए कृपया नीचे के चरण पूरे करें:\n\n"
         "1) 'Share (open dialog)' से दोस्तों को शेयर करो\n"
         "2) हर बार शेयर करने के बाद 'Done: Shared to friend #N' दबाओ\n"
         "3) जब तीनों Done दबा लिए हों तो 'Verify & Download' दबाओ — फिर मैं फ़ाइल डाउनलोड कर दूँगा।\n\n"
@@ -267,10 +329,11 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         flags = get_share_flags(uid)
         if sum(flags) >= 3:
             await q.edit_message_text("Share प्रमाणित हुआ — अब डाउनलोड शुरू कर रहा हूँ...")
-            # call download flow by sending a private message to user (or reuse bot)
-            # download and send
             try:
                 path = await download_and_return_path(url)
+            except DownloadError as e:
+                await context.bot.send_message(chat_id=uid, text=f"डाउनलोड एरर (yt-dlp): {e}\n(यदि sign-in/cookies मांग रहा है तो COOKIE_FILE सेट करो)।")
+                return
             except Exception as e:
                 await context.bot.send_message(chat_id=uid, text=f"डाउनलोड एरर: {e}")
                 return
@@ -341,7 +404,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_query_handler))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
 
-    print("Bot is starting...")
+    logger.info("Bot is starting...")
     app.run_polling()
 
 if __name__ == "__main__":
