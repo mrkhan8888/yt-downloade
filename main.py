@@ -1,61 +1,51 @@
+import telebot
+from yt_dlp import YoutubeDL
 import os
-import yt_dlp
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# --- CONFIG ---
-BOT_TOKEN = "8278209952:AAFVWH7Yl534bZ9BpsRhY5rpX2a-TGItcls"  # आपका Telegram Bot Token
-ADMIN_ID = 1234567890  # यहाँ अपना Telegram User ID डालें (int में)
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB limit
+BOT_TOKEN = "8278209952:AAFVWH7Yl534bZ9BpsRhY5rpX2a-TGItcls"
 
-# --- DOWNLOAD FUNCTION ---
-def download_shorts(url):
-    ydl_opts = {
-        "format": "mp4",
-        "outtmpl": "%(title)s.%(ext)s",
-        "quiet": True,
-        "noplaylist": True,
-        "geo_bypass": True,
-        "max_filesize": MAX_FILE_SIZE,
-        "restrictfilenames": True
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return ydl.prepare_filename(info)
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# --- COMMANDS ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Access Denied")
-        return
-    await update.message.reply_text("✅ Send me a YouTube Shorts link to download.")
+ydl_opts = {
+    'format': 'mp4[height<=360]',  # 360p तक डाउनलोड करेगा, छोटे फाइल के लिए
+    'outtmpl': 'downloads/%(id)s.%(ext)s',
+    'noplaylist': True,
+    'quiet': True,
+}
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ You are not authorized to use this bot.")
+if not os.path.exists('downloads'):
+    os.mkdir('downloads')
+
+@bot.message_handler(commands=['start'])
+def start_msg(message):
+    bot.reply_to(message, "नमस्ते! YouTube Shorts का लिंक भेजो, मैं वीडियो डाउनलोड करके दूंगा।")
+
+@bot.message_handler(func=lambda message: True)
+def download_shorts(message):
+    url = message.text.strip()
+
+    # Check if url contains 'shorts'
+    if "youtube.com/shorts/" not in url:
+        bot.reply_to(message, "कृपया केवल YouTube Shorts का लिंक भेजें।")
         return
 
-    url = update.message.text
-    if "youtube.com/shorts" not in url and "youtu.be" not in url:
-        await update.message.reply_text("❌ Please send a valid YouTube Shorts URL.")
-        return
+    msg = bot.reply_to(message, "डाउनलोड शुरू कर रहा हूँ, कृपया इंतजार करें...")
 
-    await update.message.reply_text("⏳ Downloading...")
     try:
-        file_path = download_shorts(url)
-        if os.path.getsize(file_path) > MAX_FILE_SIZE:
-            await update.message.reply_text("❌ File too large to send via Telegram.")
-            os.remove(file_path)
-            return
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info)
+        
+        # Send video file to user
+        with open(file_path, 'rb') as video:
+            bot.send_video(message.chat.id, video)
+        
+        bot.edit_message_text("डाउनलोड पूरा हो गया!", message.chat.id, msg.message_id)
 
-        await update.message.reply_video(video=open(file_path, "rb"))
+        # Clean up file after sending
         os.remove(file_path)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
 
-# --- MAIN ---
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+    except Exception as e:
+        bot.edit_message_text(f"कुछ गलत हो गया: {str(e)}", message.chat.id, msg.message_id)
+
+bot.infinity_polling()
