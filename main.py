@@ -6,7 +6,7 @@ import yt_dlp
 import logging
 
 # === CONFIG ===
-BOT_TOKEN = "<YOUR-BOT-TOKEN>"
+BOT_TOKEN = "<8278209952:AAFVWH7Yl534bZ9BpsRhY5rpX2a-TGItcls>"
 ADMIN_ID = 5073222820
 RENDER_DOMAIN = "<YOUR-RENDER-DOMAIN>"  # e.g. mybot.onrender.com
 
