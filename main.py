@@ -4,8 +4,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from flask import Flask, request
 
-BOT_TOKEN = "यहाँ_अपना_BOT_TOKEN_डालो"
-ADMIN_ID = 123456789  # यहाँ अपना Telegram user id डालो
+BOT_TOKEN = "8278209952:AAFVWH7Yl534bZ9BpsRhY5rpX2a-TGItcls"
+ADMIN_ID = 5073222820  # यहाँ अपना Telegram user id डालो
 
 # Flask app for Render webhook
 flask_app = Flask(__name__)
