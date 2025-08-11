@@ -7,7 +7,7 @@ BOT_TOKEN = "8278209952:AAFVWH7Yl534bZ9BpsRhY5rpX2a-TGItcls"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 ydl_opts = {
-    'format': 'mp4[height<=360]',  # 360p तक डाउनलोड करेगा, छोटे फाइल के लिए
+    'format': 'mp4[height<=360]',  # 360p तक डाउनलोड करेगा
     'outtmpl': 'downloads/%(id)s.%(ext)s',
     'noplaylist': True,
     'quiet': True,
@@ -24,7 +24,6 @@ def start_msg(message):
 def download_shorts(message):
     url = message.text.strip()
 
-    # Check if url contains 'shorts'
     if "youtube.com/shorts/" not in url:
         bot.reply_to(message, "कृपया केवल YouTube Shorts का लिंक भेजें।")
         return
@@ -35,17 +34,17 @@ def download_shorts(message):
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
-        
-        # Send video file to user
+
         with open(file_path, 'rb') as video:
             bot.send_video(message.chat.id, video)
-        
+
         bot.edit_message_text("डाउनलोड पूरा हो गया!", message.chat.id, msg.message_id)
 
-        # Clean up file after sending
         os.remove(file_path)
 
     except Exception as e:
         bot.edit_message_text(f"कुछ गलत हो गया: {str(e)}", message.chat.id, msg.message_id)
 
-bot.infinity_polling()
+if __name__ == '__main__':
+    bot.remove_webhook()  # webhook हटाओ ताकि polling ठीक चले
+    bot.infinity_polling()
